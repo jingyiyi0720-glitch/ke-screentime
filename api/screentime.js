@@ -32,7 +32,8 @@ module.exports = async (req, res) => {
   const parts = url.split('/').filter(Boolean);
 
   if (parts.includes('toggle')) {
-    const appName = decodeURIComponent(parts[parts.length - 1]);
+    const raw = decodeURIComponent(parts[parts.length - 1]);
+    const appName = raw.split('?')[0];
     if (!appName || appName === 'toggle') return res.status(400).json({ error: 'Missing app name' });
     const now = getNowCST();
     const today = getTodayStr();
