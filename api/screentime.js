@@ -8,8 +8,15 @@ function getNowCST() {
 }
 
 function getTodayStr() {
-  const now = getNowCST();
-  return now.toISOString().slice(0, 10);
+  return getNowCST().toISOString().slice(0, 10);
+}
+
+function jsonResponse(res, statusCode, data) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*'
+  });
+  res.end(JSON.stringify(data));
 }
 
 async function readData() {
@@ -29,14 +36,14 @@ async function writeData(data) {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
   const url = req.url || '';
   const parts = url.split('/').filter(Boolean);
 
   if (parts.includes('toggle')) {
     const raw = decodeURIComponent(parts[parts.length - 1]);
     const appName = raw.split('?')[0];
-    if (!appName || appName === 'toggle') return res.status(400).json({ error: 'Missing app name' });
+    if (!appName || appName === 'toggle') return jsonResponse(res, 400, { error: 'Missing app name' });
+
     const now = getNowCST();
     const today = getTodayStr();
     const timeStr = now.toTimeString().slice(0, 5);
@@ -48,7 +55,6 @@ module.exports = async (req, res) => {
     }
     const app = data.apps[appName];
 
-    // 超时自动截断
     if (app.last_state === 'open' && app.open_time) {
       const mins = Math.round((now - new Date(app.open_time)) / 60000);
       if (mins >= TIMEOUT_MINUTES) {
@@ -79,7 +85,7 @@ module.exports = async (req, res) => {
       delete app.open_time;
     }
     await writeData(data);
-    return res.status(200).json({ app: appName, state: app.last_state, total_minutes: app.total_minutes, time: timeStr });
+    return jsonResponse(res, 200, { app: appName, state: app.last_state, total_minutes: app.total_minutes, time: timeStr });
   }
 
   if (parts.includes('query')) {
@@ -87,9 +93,8 @@ module.exports = async (req, res) => {
     const today = getTodayStr();
     const now = getNowCST();
 
-    // query时也检查超时
     if (data.apps) {
-      for (const [appName, app] of Object.entries(data.apps)) {
+      for (const [, app] of Object.entries(data.apps)) {
         if (app.date === today && app.last_state === 'open' && app.open_time) {
           const mins = Math.round((now - new Date(app.open_time)) / 60000);
           if (mins >= TIMEOUT_MINUTES) {
@@ -116,8 +121,9 @@ module.exports = async (req, res) => {
         return { app, total_minutes: total, sessions: info.sessions, state: info.last_state };
       })
       .sort((a, b) => b.total_minutes - a.total_minutes);
-    return res.status(200).json({ date: today, apps: summary, time: now.toTimeString().slice(0, 5) });
+
+    return jsonResponse(res, 200, { date: today, apps: summary, time: now.toTimeString().slice(0, 5) });
   }
 
-  return res.status(404).json({ error: 'Not found' });
+  return jsonResponse(res, 404, { error: 'Not found' });
 };
