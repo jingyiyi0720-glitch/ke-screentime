@@ -1,13 +1,15 @@
 const BIN_ID = '6a3007aeda38895dfec4024e';
 const API_KEY = '$2a$10$TNOdj2mIgssxf2Qm9jyRMeS426aeHTrXT4J5KGdNDKhhXNnUbo7ZK';
 const BASE_URL = 'https://api.jsonbin.io/v3/b/' + BIN_ID;
+const TIMEOUT_MINUTES = 30;
 
 function getNowCST() {
   return new Date(Date.now() + 8 * 60 * 60 * 1000);
 }
 
 function getTodayStr() {
-  return getNowCST().toISOString().slice(0, 10);
+  const now = getNowCST();
+  return now.toISOString().slice(0, 10);
 }
 
 async function readData() {
@@ -45,6 +47,21 @@ module.exports = async (req, res) => {
       data.apps[appName] = { date: today, sessions: [], total_minutes: 0, last_state: 'closed' };
     }
     const app = data.apps[appName];
+
+    // 超时自动截断
+    if (app.last_state === 'open' && app.open_time) {
+      const mins = Math.round((now - new Date(app.open_time)) / 60000);
+      if (mins >= TIMEOUT_MINUTES) {
+        app.last_state = 'closed';
+        app.total_minutes += TIMEOUT_MINUTES;
+        if (app.sessions.length > 0) {
+          app.sessions[app.sessions.length - 1].close = timeStr;
+          app.sessions[app.sessions.length - 1].minutes = TIMEOUT_MINUTES;
+        }
+        delete app.open_time;
+      }
+    }
+
     if (app.last_state === 'closed') {
       app.last_state = 'open';
       app.open_time = now.toISOString();
@@ -69,9 +86,35 @@ module.exports = async (req, res) => {
     const data = await readData();
     const today = getTodayStr();
     const now = getNowCST();
+
+    // query时也检查超时
+    if (data.apps) {
+      for (const [appName, app] of Object.entries(data.apps)) {
+        if (app.date === today && app.last_state === 'open' && app.open_time) {
+          const mins = Math.round((now - new Date(app.open_time)) / 60000);
+          if (mins >= TIMEOUT_MINUTES) {
+            app.last_state = 'closed';
+            app.total_minutes += TIMEOUT_MINUTES;
+            const timeStr = now.toTimeString().slice(0, 5);
+            if (app.sessions.length > 0) {
+              app.sessions[app.sessions.length - 1].close = timeStr;
+              app.sessions[app.sessions.length - 1].minutes = TIMEOUT_MINUTES;
+            }
+            delete app.open_time;
+          }
+        }
+      }
+    }
+
     const summary = Object.entries(data.apps || {})
       .filter(([, info]) => info.date === today)
-      .map(([app, info]) => ({ app, total_minutes: info.total_minutes, sessions: info.sessions.length, state: info.last_state }))
+      .map(([app, info]) => {
+        let total = info.total_minutes;
+        if (info.last_state === 'open' && info.open_time) {
+          total += Math.round((now - new Date(info.open_time)) / 60000);
+        }
+        return { app, total_minutes: total, sessions: info.sessions, state: info.last_state };
+      })
       .sort((a, b) => b.total_minutes - a.total_minutes);
     return res.status(200).json({ date: today, apps: summary, time: now.toTimeString().slice(0, 5) });
   }
